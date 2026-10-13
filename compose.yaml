@@ -1,0 +1,19 @@
+# Local use: `docker compose up --build --detach` builds and starts the demo.
+services:
+  app:
+    build: .
+    image: docker-shiny-demo:local
+    # Bind only to this computer. Public hosting uses compose.hosting.yaml instead.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3838}:3838"
+    # Compose reads .env for substitution. Values reach the container only when
+    # they are explicitly listed here; .env is not loaded by the Shiny app itself.
+    environment:
+      GREETING_TEXT: "${GREETING_TEXT:-Hello from the Shiny container!}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

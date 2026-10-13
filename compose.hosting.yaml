@@ -1,0 +1,27 @@
+# Hosting use only. This is a separate, complete file, not a local Compose override.
+# The hosting admins supply the names and the existing external network.
+services:
+  app:
+    # The deployment script accepts only a registry digest, never a moving tag.
+    image: "${APP_IMAGE:?APP_IMAGE must contain the release image digest}"
+    container_name: "${APP_CONTAINER_NAME:?Hosting admins must choose a unique name}"
+    restart: unless-stopped
+    environment:
+      GREETING_TEXT: "${GREETING_TEXT:-Hello from the Shiny container!}"
+    networks:
+      dockernet:
+        aliases:
+          - "${APP_NETWORK_ALIAS:?Hosting admins must choose a unique backend alias}"
+    # No host port is published. The shared proxy reaches this app on dockernet:3838.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  dockernet:
+    external: true
+    name: dockernet

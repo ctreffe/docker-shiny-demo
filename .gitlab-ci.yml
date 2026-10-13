@@ -1,0 +1,103 @@
+# All maintained files live on GitHub and are imported together into GitLab.
+# Hosting admins enable the optional host jobs after reviewing the imported code.
+stages:
+  - sync
+  - test
+  - build
+  - deploy
+
+variables:
+  HOSTING_ENABLED: "false"
+  SYNC_ENABLED: "false"
+  RUN_SYNC:
+    value: "false"
+    description: "Set true to run only GitHub synchronization; keep false for tests/build/deploy."
+  GITHUB_REPO_URL: "https://github.com/ctreffe/docker-shiny-demo.git"
+  GITHUB_BRANCH: "main"
+  # Full history makes checkout inspection straightforward. Sync uses its own clone.
+  GIT_DEPTH: "0"
+
+workflow:
+  rules:
+    # Sync changes the repository; it cannot change this already-created pipeline.
+    # Its token-authenticated push creates a separate pipeline for the new commit.
+    - if: '$RUN_SYNC == "true" && $SYNC_ENABLED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true" && ($CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "schedule")'
+    - if: '$RUN_SYNC == "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
+    - when: never
+
+sync-github:
+  stage: sync
+  # This job needs a Linux Docker-executor runner, not access to the hosting host.
+  image: alpine:3.22
+  resource_group: github-sync
+  before_script:
+    - apk add --no-cache bash git ca-certificates
+  script:
+    - bash scripts/sync.sh
+  rules:
+    - if: '$RUN_SYNC == "true"'
+    - when: never
+
+test-app:
+  stage: test
+  # This isolated job runs on a suitable shared Docker-executor runner.
+  image: rocker/shiny:4.6.1
+  before_script:
+    # These dependencies belong to the disposable CI job, not the runtime image.
+    - apt-get update && apt-get install -y --no-install-recommends python3
+    - install2.r --error --skipinstalled testthat
+    - Rscript requirements.R
+  script:
+    - Rscript tests/test_app.R
+    - python3 -m unittest discover -s tests -p 'test_*.py' -v
+    - for script in scripts/*.sh; do bash -n "$script"; done
+  rules:
+    - if: '$RUN_SYNC == "true"'
+      when: never
+    - when: on_success
+
+build-image:
+  stage: build
+  # These jobs expect a Linux shell executor with Docker, Compose, Bash and
+  # python3 installed. Admins must confirm it; `image:` cannot configure a shell job.
+  tags:
+    - apps.psych
+    - production
+  needs:
+    - test-app
+  script:
+    - bash scripts/build.sh
+  artifacts:
+    reports:
+      dotenv: release.env
+    expire_in: 7 days
+  rules:
+    - if: '$RUN_SYNC == "true"'
+      when: never
+    - if: '$HOSTING_ENABLED == "true" && $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web")'
+    - when: never
+
+deploy-application:
+  stage: deploy
+  tags:
+    - apps.psych
+    - production
+  needs:
+    - job: build-image
+      artifacts: true
+  # Serialize deployments to this app. Admins should also enable GitLab's
+  # "Prevent outdated deployment jobs" option for this project.
+  resource_group: production
+  environment:
+    name: production
+  script:
+    - bash scripts/deploy.sh
+  rules:
+    # Escaped brackets match the exact text [deploy], not a regex character class.
+    - if: '$RUN_SYNC == "true"'
+      when: never
+    - if: '$HOSTING_ENABLED == "true" && $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web") && $CI_COMMIT_MESSAGE =~ /\[deploy\]/'
+    - when: never

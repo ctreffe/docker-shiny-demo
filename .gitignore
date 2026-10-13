@@ -1,0 +1,14 @@
+# Local configuration and credentials never belong in the repository.
+.env
+.env.*
+!.env.example
+# Local R/Python sessions, generated release metadata and diagnostics.
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+__pycache__/
+*.pyc
+release.env
+*.local.md
+.DS_Store
